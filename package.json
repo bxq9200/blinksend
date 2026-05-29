@@ -1,0 +1,55 @@
+{
+  "name": "blinksend",
+  "version": "0.2.4",
+  "description": "Fast Windows LAN peer-to-peer file transfer desktop app.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node scripts/build-icon.js",
+    "predist": "npm run icon",
+    "dist": "electron-builder --win portable --publish never",
+    "dist:win": "electron-builder --win portable --publish never"
+  },
+  "keywords": [
+    "lan",
+    "file-transfer",
+    "electron"
+  ],
+  "author": "bxq9200",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bxq9200/blinksend.git"
+  },
+  "homepage": "https://github.com/bxq9200/blinksend#readme",
+  "bugs": {
+    "url": "https://github.com/bxq9200/blinksend/issues"
+  },
+  "build": {
+    "appId": "local.blinksend.desktop",
+    "productName": "BlinkSend",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "executableName": "BlinkSend",
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "BlinkSend-Portable-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^3.0.1"
+  }
+}

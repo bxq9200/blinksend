@@ -1,0 +1,22 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+contextBridge.exposeInMainWorld('lanShare', {
+  getState: () => ipcRenderer.invoke('app:get-state'),
+  chooseFiles: () => ipcRenderer.invoke('files:choose'),
+  chooseDownloadDir: () => ipcRenderer.invoke('config:choose-download-dir'),
+  flattenFiles: (paths) => ipcRenderer.invoke('files:flatten', paths),
+  sendFiles: (deviceId, files) => ipcRenderer.invoke('transfer:send', { deviceId, files }),
+  acceptTransfer: (requestId) => ipcRenderer.invoke('transfer:accept', requestId),
+  rejectTransfer: (requestId) => ipcRenderer.invoke('transfer:reject', requestId),
+  openPath: (targetPath) => ipcRenderer.invoke('shell:open-path', targetPath),
+  minimize: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+  close: () => ipcRenderer.invoke('window:close'),
+  filePathFromFile: (file) => webUtils.getPathForFile(file),
+  onDevices: (callback) => ipcRenderer.on('devices:update', (_event, devices) => callback(devices)),
+  onIncomingRequest: (callback) => ipcRenderer.on('transfer:incoming-request', (_event, request) => callback(request)),
+  onTransferUpdate: (callback) => ipcRenderer.on('transfer:update', (_event, transfer) => callback(transfer)),
+  onHistoryUpdate: (callback) => ipcRenderer.on('history:update', (_event, history) => callback(history)),
+  onConfigUpdate: (callback) => ipcRenderer.on('config:update', (_event, config) => callback(config)),
+  onMaximizedChange: (callback) => ipcRenderer.on('window:maximized-change', (_event, isMaximized) => callback(isMaximized)),
+});

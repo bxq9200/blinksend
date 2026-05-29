@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlinkSend</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="theme-glass">
+    <main class="shell">
+      <header class="titlebar">
+        <section class="identity">
+          <div class="sigil"><img src="../assets/logo.png" alt="BlinkSend" /></div>
+          <div>
+            <div class="eyebrow">BlinkSend</div>
+            <p id="selfInfo">正在启动...</p>
+          </div>
+        </section>
+        <section class="topline">
+          <span id="onlinePill" class="status-pill">0 台在线</span>
+          <button id="minBtn" class="icon-button" title="最小化" aria-label="最小化">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+          </button>
+          <button id="maxBtn" class="icon-button" title="最大化" aria-label="最大化">
+            <svg class="max-icon" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            <svg class="restore-icon" viewBox="0 0 24 24"><path d="M8 8h10v10H8z"/><path d="M6 14H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1"/></svg>
+          </button>
+          <button id="closeBtn" class="icon-button" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </section>
+      </header>
+
+      <section class="deck">
+        <aside class="left-rail">
+          <section class="hero-panel">
+            <div>
+              <span class="label">目标设备</span>
+              <strong id="targetTitle">未选择</strong>
+              <small id="targetSubtitle">选择在线设备后开始传输</small>
+            </div>
+            <div>
+              <span class="label">接收目录</span>
+              <div class="directory-row">
+                <strong id="downloadDir">Downloads</strong>
+                <button id="chooseDownloadDir" class="mini-action">更改目录</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="speed-panel">
+            <div class="speed-card up">
+              <span><svg class="mini-icon" viewBox="0 0 24 24"><path d="m12 5 6 6"/><path d="m12 5-6 6"/><path d="M12 5v14"/></svg>发送</span>
+              <strong id="sentCount">0</strong>
+            </div>
+            <div class="speed-card down">
+              <span><svg class="mini-icon" viewBox="0 0 24 24"><path d="m12 19 6-6"/><path d="m12 19-6-6"/><path d="M12 5v14"/></svg>接收</span>
+              <strong id="receivedCount">0</strong>
+            </div>
+          </section>
+
+          <section class="device-panel">
+            <div class="panel-head">
+              <h2>在线设备</h2>
+              <span id="deviceCount">0</span>
+            </div>
+            <div id="devices" class="devices"></div>
+          </section>
+        </aside>
+
+        <section class="command-panel">
+          <div class="panel-head command-head">
+            <div>
+              <h2>文件投递</h2>
+              <span>局域网点对点直传</span>
+            </div>
+            <button id="chooseFiles" class="primary-button" disabled>
+              <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              <span>选择文件</span>
+            </button>
+          </div>
+
+          <div id="dropZone" class="drop-zone is-disabled">
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            </div>
+            <h3>拖拽文件或文件夹到这里</h3>
+            <p>会先请求对方确认，然后再开始传输。</p>
+          </div>
+
+          <div class="panel-row">
+            <section class="queue-panel">
+              <div class="panel-head">
+                <h2>传输队列</h2>
+                <span id="queueCount">0</span>
+              </div>
+              <div id="transfers" class="transfers empty-state">还没有传输任务。</div>
+            </section>
+
+            <section class="request-panel">
+              <div class="panel-head">
+                <h2>接收请求</h2>
+                <span id="requestCount">0</span>
+              </div>
+              <div id="requests" class="requests empty-state">等待其他设备发送文件。</div>
+            </section>
+          </div>
+
+          <section class="history-panel">
+            <div class="panel-head">
+              <h2>传输历史</h2>
+              <span id="historyCount">0</span>
+            </div>
+            <div id="history" class="history empty-state">完成、失败和拒绝的记录会保存在这里。</div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
