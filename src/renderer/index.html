@@ -12,12 +12,13 @@
         <section class="identity">
           <div class="sigil"><img src="../assets/logo.png" alt="BlinkSend" /></div>
           <div>
-            <div class="eyebrow">BlinkSend</div>
+            <div class="eyebrow">BlinkSend <small id="appVersion"></small></div>
             <p id="selfInfo">正在启动...</p>
           </div>
         </section>
         <section class="topline">
           <span id="onlinePill" class="status-pill">0 台在线</span>
+          <button id="updateBtn" class="icon-button" title="版本更新" aria-label="版本更新"><i data-lucide="refresh-cw"></i></button>
           <button id="minBtn" class="icon-button" title="最小化" aria-label="最小化">
             <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
           </button>
@@ -45,6 +46,13 @@
                 <strong id="downloadDir">Downloads</strong>
                 <button id="chooseDownloadDir" class="mini-action">更改目录</button>
               </div>
+              <label class="conflict-setting">同名文件
+                <select id="conflictPolicy" aria-label="同名文件处理方式">
+                  <option value="keep-both">保留两份</option>
+                  <option value="replace">替换原文件</option>
+                  <option value="new-folder">保存到新目录</option>
+                </select>
+              </label>
             </div>
           </section>
 
@@ -117,6 +125,20 @@
       </section>
     </main>
 
+    <dialog id="updateDialog">
+      <div class="update-heading"><h2>版本更新</h2><button id="closeUpdateBtn" class="icon-button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <p id="updateStatus" role="status">尚未检查</p>
+      <progress id="updateProgress" max="100" value="0" hidden></progress>
+      <pre id="updateNotes"></pre>
+      <div class="update-actions">
+        <button id="checkUpdateBtn" class="ghost-button">检查更新</button>
+        <button id="downloadUpdateBtn" class="primary-button" hidden>下载新版</button>
+        <button id="launchUpdateBtn" class="primary-button" hidden>切换新版</button>
+        <button id="releasesBtn" class="ghost-button">发布页面</button>
+      </div>
+    </dialog>
+
+    <script src="../../node_modules/lucide/dist/umd/lucide.min.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

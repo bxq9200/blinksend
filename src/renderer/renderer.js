@@ -6,6 +6,7 @@ const state = {
   requests: new Map(),
   history: [],
 };
+lucide.createIcons();
 
 let transferRenderFrame = null;
 let historyRenderFrame = null;
@@ -28,6 +29,9 @@ const downloadDirEl = document.querySelector('#downloadDir');
 const chooseDownloadDirEl = document.querySelector('#chooseDownloadDir');
 const historyEl = document.querySelector('#history');
 const historyCountEl = document.querySelector('#historyCount');
+const conflictPolicyEl = document.querySelector('#conflictPolicy');
+const updateDialog = document.querySelector('#updateDialog');
+let updateState = {};
 
 function formatBytes(bytes = 0) {
   if (bytes < 1024) return `${bytes} B`;
@@ -71,6 +75,9 @@ function renderSelf() {
   const ipText = state.self.ips.length ? state.self.ips.join(', ') : '未检测到局域网 IP';
   selfInfoEl.textContent = `${state.self.name} · ${ipText}`;
   downloadDirEl.textContent = shortPath(state.self.downloadDir);
+  downloadDirEl.title = state.self.downloadDir;
+  conflictPolicyEl.value = state.self.conflictPolicy || 'keep-both';
+  document.querySelector('#appVersion').textContent = `v${state.self.version}`;
 }
 
 function shortPath(value) {
@@ -203,17 +210,30 @@ function renderRequests() {
           <div class="meta">来自 ${escapeHtml(request.from.name)} · ${formatBytes(size)}</div>
         </div>
       </div>
+      <label class="request-policy">同名文件 <select aria-label="本次接收的同名文件处理方式">
+        <option value="keep-both">保留两份</option>
+        <option value="replace">替换原文件</option>
+        <option value="new-folder">保存到新目录</option>
+      </select></label>
       <div class="request-actions"></div>
     `;
 
     const actions = item.querySelector('.request-actions');
+    const policySelect = item.querySelector('select');
+    policySelect.value = request.policy || state.self?.conflictPolicy || 'keep-both';
+    policySelect.addEventListener('change', () => { request.policy = policySelect.value; });
     const accept = document.createElement('button');
     accept.className = 'primary-button';
     accept.textContent = '接收';
     accept.addEventListener('click', async () => {
-      await window.lanShare.acceptTransfer(request.id);
-      state.requests.delete(request.id);
-      renderRequests();
+      accept.disabled = reject.disabled = true;
+      try {
+        const result = await window.lanShare.acceptTransfer(request.id, policySelect.value);
+        if (!result.ok) { alert(result.error || '接收失败'); return; }
+        state.requests.delete(request.id);
+        renderRequests();
+      } catch (error) { alert(error.message); }
+      finally { accept.disabled = reject.disabled = false; }
     });
 
     const reject = document.createElement('button');
@@ -354,9 +374,40 @@ window.lanShare.onHistoryUpdate((history) => {
 window.lanShare.onConfigUpdate((config) => {
   if (state.self && config.downloadDir) {
     state.self.downloadDir = config.downloadDir;
+    state.self.conflictPolicy = config.conflictPolicy;
     renderSelf();
   }
 });
+
+conflictPolicyEl.addEventListener('change', async () => {
+  try {
+    const config = await window.lanShare.setConflictPolicy(conflictPolicyEl.value);
+    state.self.conflictPolicy = config.conflictPolicy;
+  } catch (error) { alert(error.message); renderSelf(); }
+});
+
+function renderUpdate(value) {
+  updateState = value;
+  const labels = { idle: '尚未检查', checking: '正在检查更新…', current: '当前已是最新版本', available: `发现新版 v${value.latestVersion}`,
+    downloading: `正在下载 ${value.progress || 0}%`, ready: '新版已下载并校验，可切换运行', error: value.error || '更新失败' };
+  document.querySelector('#updateStatus').textContent = `当前 v${value.currentVersion || state.self?.version || ''} · ${labels[value.status] || ''}`;
+  document.querySelector('#updateNotes').textContent = value.notes || '';
+  document.querySelector('#checkUpdateBtn').disabled = ['checking', 'downloading', 'ready'].includes(value.status);
+  document.querySelector('#downloadUpdateBtn').hidden = !['available', 'error'].includes(value.status) || !value.latestVersion || value.latestVersion === value.currentVersion;
+  document.querySelector('#launchUpdateBtn').hidden = value.status !== 'ready';
+  document.querySelector('#updateProgress').hidden = value.status !== 'downloading';
+  document.querySelector('#updateProgress').value = value.progress || 0;
+  document.querySelector('#updateBtn').title = value.status === 'available' ? `发现新版 v${value.latestVersion}` : '版本更新';
+  document.querySelector('#updateBtn').classList.toggle('has-update', value.status === 'available' || value.status === 'ready');
+}
+document.querySelector('#updateBtn').addEventListener('click', () => { updateDialog.showModal(); renderUpdate(updateState); });
+document.querySelector('#closeUpdateBtn').addEventListener('click', () => updateDialog.close());
+document.querySelector('#checkUpdateBtn').addEventListener('click', async () => renderUpdate(await window.lanShare.checkUpdate()));
+document.querySelector('#downloadUpdateBtn').addEventListener('click', async () => renderUpdate(await window.lanShare.downloadUpdate()));
+document.querySelector('#launchUpdateBtn').addEventListener('click', async () => { const result = await window.lanShare.launchUpdate(); if (result.error) alert(result.error); });
+document.querySelector('#releasesBtn').addEventListener('click', () => window.lanShare.openReleases());
+window.lanShare.onUpdate(renderUpdate);
+window.lanShare.onRequestClosed((id) => { state.requests.delete(id); renderRequests(); });
 
 document.querySelector('#minBtn').addEventListener('click', () => window.lanShare.minimize());
 document.querySelector('#maxBtn').addEventListener('click', () => window.lanShare.toggleMaximize());
@@ -369,6 +420,7 @@ window.lanShare.getState().then((initialState) => {
   state.self = initialState.self;
   state.devices = initialState.devices;
   state.history = initialState.history || [];
+  renderUpdate(initialState.update || {});
   renderSelf();
   renderDevices();
   renderTarget();

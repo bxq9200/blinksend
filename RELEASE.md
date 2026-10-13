@@ -12,15 +12,15 @@ npm run dist
 
 ```powershell
 git add .
-git commit -m "Release v0.2.4"
+git commit -m "Release v0.3.0"
 git push
 ```
 
 4. 创建 tag：
 
 ```powershell
-git tag v0.2.4
-git push origin v0.2.4
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 5. 等待 GitHub Actions 自动构建并上传 Release 产物。

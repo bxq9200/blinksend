@@ -252,7 +252,7 @@ body.is-maximized #maxBtn .restore-icon {
   display: grid;
   grid-template-columns: 1fr;
   gap: 1px;
-  flex: 0 0 166px;
+  flex: 0 0 218px;
   overflow: hidden;
 }
 
@@ -664,6 +664,29 @@ body.is-maximized #maxBtn .restore-icon {
   line-height: 1;
   box-shadow: none;
 }
+
+.eyebrow small { font-size: 11px; color: var(--muted); font-weight: 500; }
+.conflict-setting, .request-policy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+select { min-width: 0; max-width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--panel-line); border-radius: 6px; background: var(--button); color: var(--text); font: inherit; }
+.request-policy select { flex: 1; }
+.requests { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; }
+.queue-panel, .request-panel { display: flex; flex-direction: column; min-width: 0; }
+.queue-panel > .transfers, .request-panel > .requests { flex: 1; min-height: 0; max-height: none; padding-bottom: 8px; }
+.request-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.request-actions button { height: 32px; }
+.deck { height: calc(100vh - 98px); }
+.command-panel { overflow-y: auto; }
+.panel-row { min-height: 205px; flex-shrink: 0; }
+.drop-zone { flex-basis: 180px; }
+dialog { width: min(520px, calc(100vw - 40px)); max-height: calc(100vh - 64px); overflow: auto; padding: 22px; border: 1px solid var(--panel-line); border-radius: 12px; color: var(--text); background: #f5f8fc; box-shadow: 0 20px 60px #07193633; }
+dialog::backdrop { background: #07193655; }
+.update-heading { display: flex; align-items: center; justify-content: space-between; }
+.update-heading h2 { margin: 0; font-size: 18px; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#updateNotes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 230px; overflow-y: auto; font: inherit; font-size: 13px; color: var(--muted); }
+#updateProgress { width: 100%; height: 8px; }
+[hidden] { display: none !important; }
+#updateBtn.has-update { color: var(--accent); border-color: var(--accent); }
 
 .history-panel {
   flex: 0 0 130px;

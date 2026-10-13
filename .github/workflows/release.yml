@@ -28,7 +28,13 @@ jobs:
       - name: Build portable exe
         run: npm run dist
 
+      - name: Test
+        run: npm test
+
       - name: Upload release artifact
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true

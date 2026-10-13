@@ -6,6 +6,8 @@ const os = require('os');
 const dgram = require('dgram');
 const net = require('net');
 const crypto = require('crypto');
+const { ReceiveStorage, validatePolicy } = require('./receive-storage');
+const { VersionUpdater, REPO } = require('./version-updater');
 
 const DISCOVERY_PORT = 43111;
 const DISCOVERY_INTERVAL_MS = 2000;
@@ -24,6 +26,8 @@ let transferPort = DEFAULT_TRANSFER_PORT;
 let discoveryTimer;
 let pruneTimer;
 let historySaveTimer;
+let updater;
+const receiveStorage = new ReceiveStorage();
 
 const devices = new Map();
 const pendingIncoming = new Map();
@@ -48,15 +52,17 @@ async function readConfig() {
     const raw = await fsp.readFile(configPath(), 'utf8');
     const parsed = JSON.parse(raw);
     const legacyDefault = path.join(app.getPath('downloads'), 'LANShare');
-    const downloadDir = parsed.downloadDir === legacyDefault ? defaultDownloadDir() : parsed.downloadDir;
+    const downloadDir = parsed.downloadDir === legacyDefault ? defaultDownloadDir() : (parsed.downloadDir || defaultDownloadDir());
     return {
       downloadDir: defaultDownloadDir(),
       ...parsed,
       downloadDir,
+      conflictPolicy: ['keep-both', 'replace', 'new-folder'].includes(parsed.conflictPolicy) ? parsed.conflictPolicy : 'keep-both',
     };
   } catch {
     return {
       downloadDir: defaultDownloadDir(),
+      conflictPolicy: 'keep-both',
     };
   }
 }
@@ -64,6 +70,7 @@ async function readConfig() {
 async function writeConfig(config) {
   const safeConfig = {
     downloadDir: config.downloadDir || defaultDownloadDir(),
+    conflictPolicy: validatePolicy(config.conflictPolicy || 'keep-both'),
   };
   await fsp.mkdir(app.getPath('userData'), { recursive: true });
   await fsp.writeFile(configPath(), JSON.stringify(safeConfig, null, 2));
@@ -278,7 +285,7 @@ function emitDevices() {
 }
 
 async function startTransferServer() {
-  tcpServer = net.createServer(handleIncomingSocket);
+  tcpServer = net.createServer({ allowHalfOpen: true }, handleIncomingSocket);
 
   await new Promise((resolve, reject) => {
     tcpServer.once('error', reject);
@@ -287,7 +294,7 @@ async function startTransferServer() {
     if (error.code !== 'EADDRINUSE') throw error;
     transferPort = 0;
     await new Promise((resolve, reject) => {
-      tcpServer = net.createServer(handleIncomingSocket);
+      tcpServer = net.createServer({ allowHalfOpen: true }, handleIncomingSocket);
       tcpServer.once('error', reject);
       tcpServer.listen(transferPort, resolve);
     });
@@ -298,10 +305,11 @@ async function startTransferServer() {
 
 function handleIncomingSocket(socket) {
   socket.setNoDelay(true);
+  socket.on('error', () => socket.destroy());
 
   readJsonLine(socket)
     .then((header) => {
-      if (header.kind !== 'file' || !header.name || !Number.isFinite(header.size)) {
+      if (header.kind !== 'file' || !header.name || !Number.isSafeInteger(header.size) || header.size < 0) {
         socket.destroy();
         return;
       }
@@ -318,19 +326,23 @@ function handleIncomingSocket(socket) {
         },
       };
 
+      socket.pause();
       const decision = request.header.batchId ? batchDecisions.get(batchKey(request)) : undefined;
-      if (decision === true) {
-        acceptRequest(request).catch(() => socket.destroy());
+      if (decision?.accept) {
+        acceptRequest(request, decision).catch(() => socket.destroy());
         return;
       }
 
-      if (decision === false) {
+      if (decision?.accept === false) {
         rejectRequest(request);
         return;
       }
 
       socket.pause();
       pendingIncoming.set(requestId, request);
+      socket.once('close', () => {
+        if (pendingIncoming.delete(requestId)) sendToRenderer('transfer:request-closed', requestId);
+      });
       sendToRenderer('transfer:incoming-request', {
         id: requestId,
         fileName: header.name,
@@ -388,33 +400,33 @@ function batchKey(request) {
   return `${request.from.id || request.from.address || 'unknown'}:${request.header.batchId}`;
 }
 
-async function acceptIncomingTransfer(requestId) {
+async function acceptIncomingTransfer(requestId, policy) {
   const request = pendingIncoming.get(requestId);
   if (!request) return { ok: false, error: '请求已失效' };
 
-  pendingIncoming.delete(requestId);
-  if (request.header.batchId) {
-    batchDecisions.set(batchKey(request), true);
+  try {
+    const config = await readConfig();
+    const decision = { accept: true, policy: validatePolicy(policy || config.conflictPolicy), root: config.downloadDir };
+    if (decision.policy === 'new-folder') decision.root = await receiveStorage.newFolder(decision.root);
+    await acceptRequest(request, decision);
+    pendingIncoming.delete(requestId);
+    if (request.header.batchId) batchDecisions.set(batchKey(request), decision);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
   }
-
-  await acceptRequest(request);
-  return { ok: true };
 }
 
-async function acceptRequest(request) {
-  const config = await readConfig();
-  const destinationRoot = config.downloadDir || defaultDownloadDir();
-  const relativePath = safeRelativePath(request.header.relativePath || request.header.name);
-  const requestedPath = path.join(destinationRoot, relativePath);
-  const destinationPath = await destinationForResume(requestedPath, request.header.size);
-  const partialPath = `${destinationPath}.part`;
-  const resumeOffset = await partialSize(partialPath, request.header.size);
-  await fsp.mkdir(path.dirname(destinationPath), { recursive: true });
+async function acceptRequest(request, decision) {
+  const storage = await receiveStorage.prepare(decision.root, request.header, decision.policy);
+  const destinationPath = storage.destination;
+  const partialPath = storage.partial;
+  const resumeOffset = storage.offset;
 
   const transferId = crypto.randomUUID();
   transfers.set(transferId, { direction: 'in', status: 'running' });
 
-  request.socket.write(JSON.stringify({ accept: true, transferId, offset: resumeOffset }) + '\n');
+  request.socket.write(JSON.stringify({ accept: true, transferId, offset: resumeOffset, completionAck: true }) + '\n');
 
   receiveFile({
     socket: request.socket,
@@ -425,6 +437,7 @@ async function acceptRequest(request) {
     size: request.header.size,
     resumeOffset,
     from: request.from,
+    storage,
   });
 }
 
@@ -434,7 +447,7 @@ function rejectIncomingTransfer(requestId) {
 
   pendingIncoming.delete(requestId);
   if (request.header.batchId) {
-    batchDecisions.set(batchKey(request), false);
+    batchDecisions.set(batchKey(request), { accept: false });
   }
 
   rejectRequest(request);
@@ -442,8 +455,7 @@ function rejectIncomingTransfer(requestId) {
 }
 
 function rejectRequest(request) {
-  request.socket.write(JSON.stringify({ accept: false }) + '\n');
-  request.socket.destroy();
+  request.socket.end(JSON.stringify({ accept: false }) + '\n');
   updateTransfer({
     id: crypto.randomUUID(),
     direction: 'in',
@@ -457,7 +469,7 @@ function rejectRequest(request) {
   });
 }
 
-function receiveFile({ socket, transferId, fileName, destinationPath, partialPath, size, resumeOffset, from }) {
+function receiveFile({ socket, transferId, fileName, destinationPath, partialPath, size, resumeOffset, from, storage }) {
   let received = resumeOffset;
   const startedAt = Date.now();
   const output = fs.createWriteStream(partialPath, { flags: resumeOffset > 0 ? 'a' : 'w' });
@@ -493,18 +505,23 @@ function receiveFile({ socket, transferId, fileName, destinationPath, partialPat
   socket.pipe(output);
   socket.resume();
 
-  output.on('finish', async () => {
-    const status = received >= size ? 'completed' : 'failed';
-    if (status === 'completed') {
-      await fsp.rename(partialPath, destinationPath).catch(async () => {
-        await fsp.copyFile(partialPath, destinationPath);
-        await fsp.unlink(partialPath).catch(() => {});
-      });
-    }
-    updateTransfer({
+  let failed = false;
+  const fail = (error) => {
+    if (failed) return;
+    failed = true;
+    socket.destroy();
+    output.destroy();
+    failTransfer(transferId, 'in', fileName, from.name, error.message);
+  };
+  output.on('close', async () => {
+    try {
+      if (failed) return;
+      if (!output.writableFinished || received !== size) throw new Error('传输中断，已保留临时文件');
+      await storage.finalize();
+      updateTransfer({
       id: transferId,
       direction: 'in',
-      status,
+      status: 'completed',
       fileName,
       size,
       transferred: Math.min(received, size),
@@ -512,11 +529,15 @@ function receiveFile({ socket, transferId, fileName, destinationPath, partialPat
       destinationPath,
       startedAt,
       finishedAt: Date.now(),
-    });
+      });
+      socket.end(JSON.stringify({ completed: true }) + '\n');
+    } catch (error) { fail(error); }
+    finally { storage.release(); }
   });
 
-  socket.on('error', (error) => failTransfer(transferId, 'in', fileName, from.name, error.message));
-  output.on('error', (error) => failTransfer(transferId, 'in', fileName, from.name, error.message));
+  socket.on('error', fail);
+  socket.on('close', () => { if (!socket.readableEnded) fail(new Error('连接中断')); });
+  output.on('error', fail);
 }
 
 function failTransfer(id, direction, fileName, peerName, error) {
@@ -529,48 +550,6 @@ function failTransfer(id, direction, fileName, peerName, error) {
     error,
     finishedAt: Date.now(),
   });
-}
-
-function safeRelativePath(value) {
-  const normalized = path.normalize(value).replace(/^(\.\.(\\|\/|$))+/, '');
-  return normalized.replace(/^([a-zA-Z]:)?[\\/]+/, '') || 'unnamed-file';
-}
-
-async function uniqueDestination(targetPath) {
-  const ext = path.extname(targetPath);
-  const base = targetPath.slice(0, targetPath.length - ext.length);
-  let candidate = targetPath;
-  let index = 1;
-
-  while (true) {
-    try {
-      await fsp.access(candidate);
-      candidate = `${base} (${index})${ext}`;
-      index += 1;
-    } catch {
-      return candidate;
-    }
-  }
-}
-
-async function destinationForResume(targetPath, size) {
-  try {
-    const stat = await fsp.stat(targetPath);
-    if (stat.size === size) {
-      return uniqueDestination(targetPath);
-    }
-  } catch {}
-
-  return targetPath;
-}
-
-async function partialSize(partialPath, fullSize) {
-  try {
-    const stat = await fsp.stat(partialPath);
-    return Math.max(0, Math.min(stat.size, Math.max(fullSize - 1, 0)));
-  } catch {
-    return 0;
-  }
 }
 
 async function chooseFiles() {
@@ -595,7 +574,7 @@ async function chooseDownloadDir() {
     return { ok: false, downloadDir: config.downloadDir };
   }
 
-  const nextConfig = await writeConfig({ downloadDir: result.filePaths[0] });
+  const nextConfig = await writeConfig({ ...config, downloadDir: result.filePaths[0] });
   sendToRenderer('config:update', nextConfig);
   return { ok: true, downloadDir: nextConfig.downloadDir };
 }
@@ -711,6 +690,7 @@ async function sendOneFile(device, file, transferId, startedAt, batch) {
     name: file.name || path.basename(file.path),
     relativePath: file.relativePath || path.basename(file.path),
     size: stat.size,
+    modifiedAt: stat.mtimeMs,
     senderId: localDevice.id,
     senderName: localDevice.name,
     batchId: batch?.id,
@@ -739,6 +719,7 @@ async function sendOneFile(device, file, transferId, startedAt, batch) {
   const offset = Math.max(0, Math.min(Number(response.offset || 0), stat.size));
   let transferred = offset;
   const input = fs.createReadStream(file.path, { start: offset });
+  const completion = response.completionAck ? readJsonLine(socket) : Promise.resolve({ completed: true });
 
   updateTransfer({
     id: transferId,
@@ -766,12 +747,20 @@ async function sendOneFile(device, file, transferId, startedAt, batch) {
     });
   });
 
-  await new Promise((resolve, reject) => {
+  let receipt;
+  try {
+    [, receipt] = await Promise.all([new Promise((resolve, reject) => {
     input.on('error', reject);
     socket.on('error', reject);
     socket.on('close', resolve);
     input.pipe(socket);
-  });
+    }), completion]);
+  } catch (error) {
+    input.destroy();
+    socket.destroy();
+    throw error;
+  }
+  if (!receipt.completed) throw new Error('接收端未完成保存');
 
   updateTransfer({
     id: transferId,
@@ -795,17 +784,45 @@ ipcMain.handle('app:get-state', async () => {
       ips: listLocalIPv4(),
       transferPort,
       downloadDir: config.downloadDir,
+      conflictPolicy: config.conflictPolicy,
+      version: app.getVersion(),
     },
     devices: Array.from(devices.values()),
     history: transferHistory,
+    update: updater.state,
   };
 });
 
 ipcMain.handle('files:choose', chooseFiles);
 ipcMain.handle('config:choose-download-dir', chooseDownloadDir);
+ipcMain.handle('config:set-conflict-policy', async (_event, policy) => {
+  const config = await writeConfig({ ...await readConfig(), conflictPolicy: validatePolicy(policy) });
+  sendToRenderer('config:update', config);
+  return config;
+});
+ipcMain.handle('update:check', () => updater.check());
+ipcMain.handle('update:download', () => updater.download());
+ipcMain.handle('update:open-releases', () => shell.openExternal(`${REPO}/releases`));
+ipcMain.handle('update:launch', async () => {
+  if (updater.state.status !== 'ready' || !updater.target) return { ok: false, error: '请先下载新版' };
+  if (pendingIncoming.size || [...transfers.values()].some((item) => ['running', 'queued'].includes(item.status))) {
+    return { ok: false, error: '请等待传输任务结束后再切换版本' };
+  }
+  const result = await dialog.showMessageBox(mainWindow, { type: 'question', buttons: ['切换新版', '取消'], defaultId: 1, cancelId: 1,
+    message: `切换到 BlinkSend ${updater.release.version}？`, detail: `当前程序会关闭。新版位置：${updater.target}` });
+  if (result.response !== 0) return { ok: false };
+  if (pendingIncoming.size || [...transfers.values()].some((item) => ['running', 'queued'].includes(item.status))) {
+    return { ok: false, error: '有新的传输任务，请稍后切换' };
+  }
+  await saveHistory();
+  const error = await shell.openPath(updater.target);
+  if (error) return { ok: false, error };
+  app.quit();
+  return { ok: true };
+});
 ipcMain.handle('files:flatten', (_event, filePaths) => flattenPaths(filePaths));
 ipcMain.handle('transfer:send', (_event, { deviceId, files }) => sendFiles(deviceId, files));
-ipcMain.handle('transfer:accept', (_event, requestId) => acceptIncomingTransfer(requestId));
+ipcMain.handle('transfer:accept', (_event, requestId, policy) => acceptIncomingTransfer(requestId, policy));
 ipcMain.handle('transfer:reject', (_event, requestId) => rejectIncomingTransfer(requestId));
 ipcMain.handle('shell:open-path', (_event, targetPath) => shell.openPath(targetPath));
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
@@ -822,11 +839,15 @@ ipcMain.handle('window:close', () => mainWindow?.close());
 
 app.whenReady().then(async () => {
   app.setName(APP_NAME);
+  updater = new VersionUpdater({ version: app.getVersion(),
+    directory: process.env.PORTABLE_EXECUTABLE_DIR || path.join(app.getPath('downloads'), 'BlinkSend-Updates'),
+    onState: (state) => sendToRenderer('update:state', state) });
   localDevice.id = getDeviceId();
   await loadHistory();
   await startTransferServer();
   startDiscovery();
   createWindow();
+  mainWindow.webContents.once('did-finish-load', () => { updater.check(); });
 });
 
 app.on('window-all-closed', () => {
